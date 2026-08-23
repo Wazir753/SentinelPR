@@ -64,9 +64,9 @@ Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **1** | Webhook ingress + ChromaDB repo indexing | ✅ **Complete** |
-| **2** | LangGraph pipeline + HF patch generation | 🔜 Next |
-| **3** | Docker sandbox + PyGithub PR/issue | Planned |
+| **1** | Webhook ingress, AST chunking, ChromaDB indexing, structured JSON logging | ✅ Complete |
+| **2** | LangGraph pipeline, HF patch generation | ✅ **Complete** |
+| **3** | Docker sandbox, PyGithub PR/issue | 🔜 Next |
 | **4** | React dashboard | Planned |
 
 ---
@@ -95,7 +95,37 @@ API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 ---
 
-## Phase 1 — Verify it yourself
+## Phase 2 — Verify the agent pipeline
+
+```bash
+pytest tests/ -v -m "not integration"
+```
+
+This runs the LangGraph pipeline with stub sandbox/GitHub nodes, including a test that forces **two sandbox failures then a pass** (retry path).
+
+### Run the pipeline manually
+
+```python
+from app.agent.graph import run_pipeline
+from app.webhooks.parser import load_mock_payload, parse_workflow_run_failure
+
+failure = parse_workflow_run_failure(load_mock_payload(), is_mock=True)
+record = run_pipeline(failure, local_repo_path="test_repo")
+print(record.trace)
+print(record.outcome, record.pr_url)
+```
+
+### Live Hugging Face patch generation (optional)
+
+Set `HF_API_TOKEN` in `.env`, then:
+
+```bash
+pytest tests/test_patch_generation.py -m integration -v
+```
+
+---
+
+## Phase 1 — Verify webhook + indexing
 
 ### 1. Run the automated acceptance suite
 
@@ -154,6 +184,9 @@ app/
 ├── events/                 # Failure event store
 ├── api/                    # /api/status (expanded in Phase 4)
 ├── agent/                  # LangGraph pipeline (Phase 2)
+│   ├── graph.py            # Orchestrator + retry conditional edges
+│   ├── nodes.py            # triage, retrieve, generate, sandbox, PR/issue
+│   └── models.py           # HF Inference API client
 ├── sandbox/                # Docker test runner (Phase 3)
 └── github_client/          # PyGithub App client (Phase 3)
 tests/                      # pytest acceptance tests

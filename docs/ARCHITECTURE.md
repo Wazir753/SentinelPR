@@ -53,7 +53,7 @@ flowchart TB
 | Phase | Components | Status |
 |-------|------------|--------|
 | **1** | Webhook ingress, AST chunking, ChromaDB indexing, structured JSON logging | ✅ Complete |
-| **2** | LangGraph pipeline, HF patch generation | Planned |
+| **2** | LangGraph pipeline, HF patch generation (`Qwen2.5-Coder-7B-Instruct`) | ✅ Complete |
 | **3** | Docker sandbox, PyGithub PR/issue creation | Planned |
 | **4** | `/status` dashboard (React 16) | Planned |
 
