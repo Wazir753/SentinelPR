@@ -16,10 +16,10 @@ FIXTURE_PAYLOAD = PROJECT_ROOT / "fixtures" / "mock_workflow_run_failure.json"
 
 
 @pytest.fixture(autouse=True)
-def clear_event_store():
-    event_store.clear_failures()
+def clear_stores():
+    event_store.clear_all()
     yield
-    event_store.clear_failures()
+    event_store.clear_all()
 
 
 @pytest.fixture

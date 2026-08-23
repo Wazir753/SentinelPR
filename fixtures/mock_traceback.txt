@@ -1,0 +1,12 @@
+FAILED test_repo/test_broken_math.py::test_broken_add - AssertionError: assert -1 == 3
+ +  where -1 = broken_add(2, 1)
+
+test_repo/test_broken_math.py:8: AssertionError
+________________________ test_broken_add ________________________
+
+    def test_broken_add():
+>       assert broken_add(2, 1) == 3
+E       assert -1 == 3
+E        +  where -1 = broken_add(2, 1)
+
+test_repo/test_broken_math.py:8: AssertionError

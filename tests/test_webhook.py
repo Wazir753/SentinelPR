@@ -17,7 +17,7 @@ def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
-    assert response.json()["phase"] == 1
+    assert response.json()["phase"] == 2
 
 
 def test_webhook_fixture_payload():
@@ -70,6 +70,6 @@ def test_status_endpoint_lists_events():
     response = client.get("/api/status")
     assert response.status_code == 200
     body = response.json()
-    assert body["phase"] == 1
+    assert body["phase"] == 2
     assert len(body["events"]) == 1
     assert body["events"][0]["repo"] == "Wazir753/SentinelPR"

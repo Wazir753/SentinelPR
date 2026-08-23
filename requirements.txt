@@ -18,7 +18,9 @@ GitPython>=3.1.0
 pytest>=8.0.0
 pytest-asyncio>=0.24.0
 
-# Phase 2+ (declared now; wired in later phases)
-# langgraph
-# langchain-core
+# Agent orchestration (Phase 2)
+langgraph>=0.2.0
+langchain-core>=0.3.0
+
+# Phase 3+ (declared now; wired in later phases)
 # PyGithub

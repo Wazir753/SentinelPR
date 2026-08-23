@@ -55,7 +55,7 @@ app.include_router(status_api.router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__, "phase": 1}
+    return {"status": "ok", "version": __version__, "phase": 2}
 
 
 @app.get("/")
@@ -63,7 +63,7 @@ async def root():
     return {
         "service": "SentinelPR",
         "version": __version__,
-        "phase": 1,
+        "phase": 2,
         "docs": "/docs",
         "status": "/api/status",
     }
