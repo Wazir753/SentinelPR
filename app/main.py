@@ -1,5 +1,7 @@
 """FastAPI application entrypoint."""
 
+from __future__ import annotations
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,26 +9,34 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
+from app.api import status as status_api
 from app.config import settings
-from app.routers import webhook
+from app.logging_config import configure_logging, log_stage
+from app.webhooks import github_webhook
 
-logging.basicConfig(
-    level=getattr(logging, settings.log_level.upper(), logging.INFO),
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("SentinelPR starting (env=%s, version=%s)", settings.app_env, __version__)
+    log_stage(
+        logger,
+        "startup",
+        "SentinelPR starting",
+        version=__version__,
+        env=settings.app_env,
+    )
     yield
-    logger.info("SentinelPR shutting down")
+    log_stage(logger, "shutdown", "SentinelPR shutting down")
 
 
 app = FastAPI(
     title="SentinelPR",
-    description="AI agent that diagnoses CI failures and opens fix PRs.",
+    description=(
+        "Autonomous code-repair agent: watches GitHub CI failures, retrieves context via RAG, "
+        "generates patches, verifies in a sandbox, and opens PRs for human review."
+    ),
     version=__version__,
     lifespan=lifespan,
 )
@@ -39,12 +49,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(webhook.router)
+app.include_router(github_webhook.router)
+app.include_router(status_api.router)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": __version__, "env": settings.app_env}
+    return {"status": "ok", "version": __version__, "phase": 1}
 
 
 @app.get("/")
@@ -52,6 +63,7 @@ async def root():
     return {
         "service": "SentinelPR",
         "version": __version__,
+        "phase": 1,
         "docs": "/docs",
-        "step": "1 — webhook ingress (mock + real GitHub workflow_run)",
+        "status": "/api/status",
     }

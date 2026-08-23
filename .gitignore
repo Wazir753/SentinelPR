@@ -34,7 +34,8 @@ ENV/
 *.swp
 *.swo
 
-# Chroma / data (future steps)
+# Chroma / runtime data
+data/
 chroma_data/
 sandbox_workspaces/
 

@@ -1,50 +1,47 @@
 """Parse and validate GitHub workflow_run webhook payloads."""
 
+from __future__ import annotations
+
 import hashlib
 import hmac
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
-from app.models.webhook import ParsedCIFailure, WorkflowRunEvent
+from app.logging_config import log_stage
+from app.webhooks.models import ParsedCIFailure, WorkflowRunEvent
 
 logger = logging.getLogger(__name__)
 
+FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures"
+
 
 def verify_github_signature(payload_body: bytes, signature_header: str | None, secret: str) -> bool:
-    """Verify X-Hub-Signature-256 when a webhook secret is configured."""
     if not secret:
         return True
     if not signature_header:
         return False
-
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        payload_body,
-        hashlib.sha256,
-    ).hexdigest()
+    expected = "sha256=" + hmac.new(secret.encode("utf-8"), payload_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, signature_header)
 
 
 def parse_workflow_run_failure(payload: dict, *, is_mock: bool = False) -> ParsedCIFailure | None:
-    """
-    Parse a workflow_run webhook payload.
-
-    Returns a ParsedCIFailure only when the run has failed; otherwise None.
-    """
     event = WorkflowRunEvent.model_validate(payload)
 
-    if event.action not in {"completed", "requested"}:
-        logger.info("Ignoring workflow_run action=%s", event.action)
+    if event.action != "completed":
+        log_stage(logger, "webhook_ingress", "Ignoring non-completed workflow_run", action=event.action)
         return None
 
     run = event.workflow_run
     if run.conclusion != "failure":
-        logger.info(
-            "Ignoring workflow_run id=%s conclusion=%s status=%s",
-            run.id,
-            run.conclusion,
-            run.status,
+        log_stage(
+            logger,
+            "webhook_ingress",
+            "Ignoring workflow_run without failure conclusion",
+            workflow_run_id=run.id,
+            conclusion=run.conclusion,
+            status=run.status,
         )
         return None
 
@@ -71,21 +68,21 @@ def parse_workflow_run_failure(payload: dict, *, is_mock: bool = False) -> Parse
         raw_payload=payload,
     )
 
-    logger.info(
-        "CI failure parsed: repo=%s workflow=%s run=#%s sha=%s mock=%s",
-        failure.repo_full_name,
-        failure.workflow_name,
-        failure.run_number,
-        failure.head_sha[:8],
-        is_mock,
+    log_stage(
+        logger,
+        "webhook_ingress",
+        "CI failure parsed",
+        event_id=failure.event_id,
+        repo=failure.repo_full_name,
+        workflow=failure.workflow_name,
+        run_number=failure.run_number,
+        head_sha=failure.head_sha,
+        is_mock=is_mock,
     )
     return failure
 
 
 def load_mock_payload() -> dict:
-    """Load the bundled mock workflow_run failure payload."""
-    from pathlib import Path
-
-    fixture_path = Path(__file__).resolve().parents[2] / "fixtures" / "mock_workflow_run_failure.json"
-    with fixture_path.open(encoding="utf-8") as f:
-        return json.load(f)
+    fixture_path = FIXTURES_DIR / "mock_workflow_run_failure.json"
+    with fixture_path.open(encoding="utf-8") as handle:
+        return json.load(handle)

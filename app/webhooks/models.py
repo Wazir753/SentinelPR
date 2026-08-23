@@ -1,21 +1,11 @@
-"""Pydantic models for GitHub webhook payloads."""
+"""Pydantic models for GitHub webhook payloads and normalized failure events."""
+
+from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
-
-
-class WorkflowConclusion(str, Enum):
-    SUCCESS = "success"
-    FAILURE = "failure"
-    CANCELLED = "cancelled"
-    SKIPPED = "skipped"
-    TIMED_OUT = "timed_out"
-    ACTION_REQUIRED = "action_required"
-    NEUTRAL = "neutral"
-    STALE = "stale"
 
 
 class WorkflowRunPayload(BaseModel):
@@ -42,7 +32,7 @@ class WorkflowRunEvent(BaseModel):
 class ParsedCIFailure(BaseModel):
     """Normalized failure record extracted from a workflow_run webhook."""
 
-    event_id: str = Field(description="Unique id for this failure event")
+    event_id: str
     received_at: datetime
     action: str
     workflow_run_id: int

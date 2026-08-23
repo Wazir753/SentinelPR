@@ -1,102 +1,195 @@
 # SentinelPR
 
-AI agent that watches GitHub CI, diagnoses test failures, generates a patch, verifies it in a sandbox, and opens a PR if tests pass.
+**Autonomous code-repair agent for Python CI failures.**
 
-Inspired by [YC RFS Fall 2026, idea #13: Self-Maintaining APIs](https://www.ycombinator.com/rfs).
+SentinelPR watches a GitHub repository's CI pipeline. When a test run fails, it diagnoses the failure, retrieves relevant code via RAG, generates a candidate patch, verifies it in an isolated Docker sandbox, and opens a pull request for human review — or files a diagnostic issue if it cannot fix the problem.
 
-## Current status: Step 1 — Webhook ingress
+Inspired by [YC RFS Fall 2026 — Self-Maintaining APIs](https://www.ycombinator.com/rfs).
 
-The FastAPI server receives GitHub `workflow_run` webhooks (or a mock payload) and logs normalized CI failure events to an in-memory store.
+[![CI](https://github.com/Wazir753/SentinelPR/actions/workflows/ci.yml/badge.svg)](https://github.com/Wazir753/SentinelPR/actions/workflows/ci.yml)
 
-**Not yet built:** ChromaDB indexing, LangGraph pipeline, HF patch generation, Docker sandbox, PyGithub PR/issue creation, React dashboard.
+---
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph GitHub
+        REPO[Customer Repository]
+        CI[GitHub Actions CI]
+        PR[Pull Request]
+        ISSUE[Diagnostic Issue]
+    end
+
+    subgraph SentinelPR
+        WH[FastAPI Webhook Ingress]
+        LG[LangGraph Orchestrator]
+        TRIAGE[triage_failure]
+        RAG[retrieve_context]
+        GEN[generate_patch]
+        SB[sandbox_test]
+        OPEN[open_pr]
+        FILE[file_issue]
+        CHROMA[(ChromaDB)]
+        HF[Hugging Face Inference API]
+        DOCKER[Docker Sandbox]
+        GH[PyGithub App Client]
+        STATUS[/status API]
+        DASH[React Dashboard]
+        NOTIFY[Notification Webhook]
+    end
+
+    REPO --> CI
+    CI -->|workflow_run failure| WH
+    WH --> LG
+    LG --> TRIAGE --> RAG --> GEN --> SB
+    RAG --> CHROMA
+    GEN --> HF
+    SB --> DOCKER
+    SB -->|pass| OPEN
+    SB -->|fail ≤2 retries| GEN
+    SB -->|fail after retries| FILE
+    OPEN --> GH --> PR
+    FILE --> GH --> ISSUE
+    OPEN --> NOTIFY
+    FILE --> NOTIFY
+    WH --> STATUS --> DASH
+```
+
+Full design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+
+---
+
+## Build status
+
+| Phase | Scope | Status |
+|-------|-------|--------|
+| **1** | Webhook ingress + ChromaDB repo indexing | ✅ **Complete** |
+| **2** | LangGraph pipeline + HF patch generation | 🔜 Next |
+| **3** | Docker sandbox + PyGithub PR/issue | Planned |
+| **4** | React dashboard | Planned |
+
+---
 
 ## Quick start
 
+**Requirements:** Python 3.11+, pip
+
 ```bash
+git clone https://github.com/Wazir753/SentinelPR.git
+cd SentinelPR
 python -m venv .venv
 
 # Windows
 .venv\Scripts\activate
-
 # macOS/Linux
 # source .venv/bin/activate
 
 pip install -r requirements.txt
-copy .env.example .env   # optional; defaults work for local dev
+cp .env.example .env   # optional for local dev
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for interactive API docs.
+API docs: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-## Test step 1 in isolation
+---
 
-### A. Mock endpoint (no GitHub needed)
+## Phase 1 — Verify it yourself
+
+### 1. Run the automated acceptance suite
 
 ```bash
-curl -X POST http://127.0.0.1:8000/webhooks/github/mock
+pytest tests/ -v
 ```
 
-### B. Post the fixture as a real webhook shape
+First run downloads the embedding model (~90 MB) and may take a minute.
+
+### 2. Test webhook ingress (no GitHub needed)
 
 ```bash
+# With server running:
+curl -X POST http://127.0.0.1:8000/webhooks/github/mock
+
+# Or post the fixture directly:
 curl -X POST http://127.0.0.1:8000/webhooks/github \
   -H "Content-Type: application/json" \
   -H "X-GitHub-Event: workflow_run" \
   -d @fixtures/mock_workflow_run_failure.json
 ```
 
-### C. List recorded failures
+Structured JSON logs appear on stdout with `"stage": "webhook_ingress"`.
+
+### 3. Index the bundled test repo
 
 ```bash
-curl http://127.0.0.1:8000/webhooks/failures
+python scripts/index_repo.py test_repo --repo sentinelpr/test-repo
 ```
 
-### D. Automated test script
+### 4. Query indexed code (Python REPL)
 
-```bash
-# Parser only (no server)
-python scripts/test_webhook.py --offline
+```python
+from app.retrieval.retriever import retrieve_context
 
-# Full live test (server must be running)
-python scripts/test_webhook.py
+hits = retrieve_context(
+    repo_full_name="sentinelpr/test-repo",
+    commit_sha="<sha printed by index_repo.py>",
+    query="function that divides two numbers",
+    top_k=3,
+)
+print([h["metadata"]["name"] for h in hits])  # expect 'divide' in results
 ```
 
-## Project layout
+---
+
+## Project structure
 
 ```
 app/
-  main.py              # FastAPI entrypoint
-  config.py            # Settings from env
-  models/webhook.py    # Pydantic models
-  routers/webhook.py   # /webhooks/github, /webhooks/github/mock
-  services/            # Parser + in-memory failure store
-fixtures/
-  mock_workflow_run_failure.json
-scripts/
-  test_webhook.py
+├── main.py                 # FastAPI entrypoint
+├── config.py               # Environment configuration
+├── logging_config.py       # JSON structured logging
+├── webhooks/               # GitHub workflow_run ingress
+├── retrieval/              # AST chunking, ChromaDB indexing & retrieval
+├── events/                 # Failure event store
+├── api/                    # /api/status (expanded in Phase 4)
+├── agent/                  # LangGraph pipeline (Phase 2)
+├── sandbox/                # Docker test runner (Phase 3)
+└── github_client/          # PyGithub App client (Phase 3)
+tests/                      # pytest acceptance tests
+test_repo/                  # Fixture Python repo for indexing
+fixtures/                   # Mock webhook payloads
+frontend/                   # React dashboard (Phase 4)
+docs/ARCHITECTURE.md        # Detailed architecture reference
 ```
 
-## Environment variables
+---
 
-See `.env.example`. For step 1, only these matter:
+## Configuration
 
-| Variable | Purpose |
-|---|---|
-| `APP_ENV` | Set to `development` to enable `/webhooks/github/mock` |
-| `LOG_LEVEL` | Logging verbosity |
-| `GITHUB_WEBHOOK_SECRET` | Optional HMAC verification for real GitHub webhooks |
+Copy `.env.example` to `.env`. Phase 1 only requires defaults; later phases need:
 
-## Build order (from spec)
+| Variable | Phase | Purpose |
+|----------|-------|---------|
+| `APP_ENV` | 1 | `development` enables mock webhook endpoint |
+| `GITHUB_WEBHOOK_SECRET` | 1 | HMAC verification for real webhooks |
+| `CHROMA_PERSIST_DIR` | 1 | ChromaDB storage path (default: `./data/chroma`) |
+| `HF_API_TOKEN` | 2 | Hugging Face Inference API for patch generation |
+| `GITHUB_APP_ID` | 3 | GitHub App authentication |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | 3 | Path to GitHub App PEM key |
+| `NOTIFY_WEBHOOK_URL` | 3+ | Outbound notification webhook |
 
-1. **Webhook ingress** ← you are here
-2. ChromaDB repo indexing
-3. LangGraph pipeline (stubbed nodes first)
-4. Hugging Face patch generation
-5. Docker sandbox test runner
-6. PyGithub PR/issue creation
-7. React dashboard
+---
+
+## Design principles
+
+- **Human approval only** — SentinelPR proposes PRs; it never auto-merges.
+- **Sandbox gate** — every patch must pass `pytest` in an isolated container before a PR is opened.
+- **Bounded cost** — max 2 patch retries per failure event.
+- **Structured traceability** — every pipeline stage emits JSON logs with `stage` and `event_id`.
+
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

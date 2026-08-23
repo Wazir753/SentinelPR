@@ -1,12 +1,14 @@
-"""In-memory store for CI failure events (MVP step 1 — replaced by DB later)."""
+"""In-memory store for CI failure events (Phase 4 will expose via /status)."""
+
+from __future__ import annotations
 
 from threading import Lock
 
-from app.models.webhook import ParsedCIFailure
+from app.webhooks.models import ParsedCIFailure
 
 _lock = Lock()
 _events: list[ParsedCIFailure] = []
-_MAX_EVENTS = 100
+_MAX_EVENTS = 200
 
 
 def record_failure(event: ParsedCIFailure) -> None:

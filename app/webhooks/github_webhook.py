@@ -1,4 +1,6 @@
-"""GitHub webhook ingress routes."""
+"""GitHub webhook ingress for workflow_run CI failures."""
+
+from __future__ import annotations
 
 import json
 import logging
@@ -6,9 +8,10 @@ import logging
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.config import settings
-from app.models.webhook import ParsedCIFailure, WebhookAck
-from app.services import failure_store
-from app.services.webhook_parser import load_mock_payload, parse_workflow_run_failure, verify_github_signature
+from app.events import store as event_store
+from app.logging_config import log_stage
+from app.webhooks.models import ParsedCIFailure, WebhookAck
+from app.webhooks.parser import load_mock_payload, parse_workflow_run_failure, verify_github_signature
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +26,19 @@ async def _handle_workflow_run_payload(payload: dict, *, is_mock: bool) -> Webho
             message="Payload received but not a completed workflow failure.",
         )
 
-    failure_store.record_failure(failure)
-    logger.info(
-        "Recorded CI failure event_id=%s repo=%s",
-        failure.event_id,
-        failure.repo_full_name,
+    event_store.record_failure(failure)
+    log_stage(
+        logger,
+        "webhook_ingress",
+        "CI failure event recorded",
+        event_id=failure.event_id,
+        repo=failure.repo_full_name,
+        workflow_run_id=failure.workflow_run_id,
     )
 
-    # Step 2+ will enqueue the LangGraph pipeline here.
     return WebhookAck(
         status="accepted",
-        message="CI failure recorded. Agent pipeline not yet wired (step 1).",
+        message="CI failure recorded. Indexing and agent pipeline wired in Phase 2+.",
         failure=failure,
     )
 
@@ -44,17 +49,12 @@ async def github_webhook(
     x_github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
     x_hub_signature_256: str | None = Header(default=None, alias="X-Hub-Signature-256"),
 ) -> WebhookAck:
-    """
-    Receive GitHub webhooks.
-
-    For MVP step 1, only `workflow_run` events with conclusion=failure are processed.
-    """
     body = await request.body()
 
     if settings.github_webhook_secret and not verify_github_signature(
         body, x_hub_signature_256, settings.github_webhook_secret
     ):
-        logger.warning("Invalid GitHub webhook signature")
+        log_stage(logger, "webhook_ingress", "Invalid webhook signature", result="rejected")
         raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
     try:
@@ -62,12 +62,18 @@ async def github_webhook(
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
 
-    logger.info("GitHub webhook received: event=%s action=%s", x_github_event, payload.get("action"))
+    log_stage(
+        logger,
+        "webhook_ingress",
+        "GitHub webhook received",
+        github_event=x_github_event,
+        action=payload.get("action"),
+    )
 
     if x_github_event != "workflow_run":
         return WebhookAck(
             status="ignored",
-            message=f"Event type '{x_github_event}' is not handled yet.",
+            message=f"Event type '{x_github_event}' is not handled.",
         )
 
     return await _handle_workflow_run_payload(payload, is_mock=False)
@@ -75,21 +81,14 @@ async def github_webhook(
 
 @router.post("/github/mock", response_model=WebhookAck)
 async def github_webhook_mock() -> WebhookAck:
-    """
-    Trigger the webhook handler with a bundled fake CI failure payload.
-
-    Use this to test end-to-end wiring without real GitHub Actions.
-    Only available when APP_ENV=development.
-    """
     if not settings.is_development:
         raise HTTPException(status_code=403, detail="Mock endpoint disabled outside development")
 
     payload = load_mock_payload()
-    logger.info("Processing mock workflow_run failure payload")
+    log_stage(logger, "webhook_ingress", "Processing mock workflow_run failure payload")
     return await _handle_workflow_run_payload(payload, is_mock=True)
 
 
 @router.get("/failures", response_model=list[ParsedCIFailure])
 async def list_recent_failures(limit: int = 20) -> list[ParsedCIFailure]:
-    """List recently recorded CI failures (in-memory, for step 1 testing)."""
-    return failure_store.list_failures(limit=min(limit, 100))
+    return event_store.list_failures(limit=min(limit, 100))
